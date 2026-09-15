@@ -38,12 +38,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       const u = session?.user ?? null
       setUser(u)
       profileUserIdRef.current = u?.id ?? null
+      // プロフィールを取り終えるまで loading を落とさない。
+      // 先に落とすと ProtectedRoute が profile=null のまま権限判定してしまい、
+      // /admin や /applications をリロードしただけで弾かれる。
       if (u) {
-        fetchProfile(u.id)
+        await fetchProfile(u.id)
       }
       setLoading(false)
     })
@@ -59,10 +62,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setProfile(null)
         return
       }
-      // 実際にユーザーが変わったときだけプロフィールを取り直す
+      // 実際にユーザーが変わったときだけプロフィールを取り直す。
+      // 取得中は loading を立てて、権限判定が profile=null で走らないようにする。
       if (profileUserIdRef.current !== nextUser.id) {
         profileUserIdRef.current = nextUser.id
-        fetchProfile(nextUser.id)
+        setLoading(true)
+        void fetchProfile(nextUser.id).finally(() => setLoading(false))
       }
     })
 

@@ -271,3 +271,15 @@ export function formatDeadline(deadlineIso: string): string {
 export function rankLabel(rank: number): string {
   return `第${rank}希望`
 }
+
+// 表示してよいURLだけを通す。http/https 以外（javascript: など）は null。
+// 保存時にも検証しているが、検証前に入った古いデータもあるため表示側でも弾く。
+export function safeHttpUrl(url: string | null | undefined): string | null {
+  if (!url) return null
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? url : null
+  } catch {
+    return null
+  }
+}

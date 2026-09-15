@@ -8,7 +8,7 @@ import {
   FilmIcon,
   TrashIcon,
 } from './icons'
-import { rankLabel } from '../lib/activity'
+import { rankLabel, safeHttpUrl } from '../lib/activity'
 
 export type MovieWishPayload = {
   title: string
@@ -111,6 +111,11 @@ export default function MovieWishCard({
     }
     if (!durationOk) {
       setMessage({ kind: 'err', text: '上映時間（分）を正の整数で入力してください' })
+      return
+    }
+    // サーバ側でも検証している。ここで弾いて分かりやすいメッセージを出す。
+    if (watchUrl.trim() && !safeHttpUrl(watchUrl.trim())) {
+      setMessage({ kind: 'err', text: '視聴URLは http:// または https:// で始めてください' })
       return
     }
     setSaving(true)

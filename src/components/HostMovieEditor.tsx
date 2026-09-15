@@ -1,6 +1,6 @@
 import { useState, useId, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
-import { type ActivityAssignment } from '../lib/activity'
+import { safeHttpUrl, type ActivityAssignment } from '../lib/activity'
 import { CheckIcon, ClockIcon, FilmIcon, LinkIcon } from './icons'
 
 type Props = {
@@ -40,6 +40,17 @@ export default function HostMovieEditor({ assignment, onSaved }: Props) {
     const durationNum = duration.trim() ? parseInt(duration, 10) : null
     if (duration.trim() && (Number.isNaN(durationNum) || (durationNum ?? 0) < 0)) {
       setError('上映時間は0以上の整数で入力してください')
+      setSubmitting(false)
+      return
+    }
+    // サーバ側でも検証している。ここで弾いて分かりやすいメッセージを出す。
+    if (posterUrl.trim() && !safeHttpUrl(posterUrl.trim())) {
+      setError('ポスター画像URLは http:// または https:// で始めてください')
+      setSubmitting(false)
+      return
+    }
+    if (watchUrl.trim() && !safeHttpUrl(watchUrl.trim())) {
+      setError('視聴URLは http:// または https:// で始めてください')
       setSubmitting(false)
       return
     }

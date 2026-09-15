@@ -11,6 +11,8 @@ export type WatchlistItem = {
   description: string | null
   has_gore: boolean
   created_at: string
+  // 上映確定で消費された時刻（未消費は null）
+  consumed_at: string | null
 }
 
 // 追加・更新で扱うフォーム値（id を持たない素のデータ）
@@ -23,11 +25,14 @@ export type WatchlistDraft = {
   has_gore: boolean
 }
 
+// 上映が確定した項目は consumed_at が入る（論理削除）。
+// ロック解除で戻せるようにするため物理削除はしない。一覧では未消費だけを扱う。
 export async function fetchWatchlist(userId: string): Promise<WatchlistItem[]> {
   const { data, error } = await supabase
     .from('movie_watchlist')
     .select('*')
     .eq('user_id', userId)
+    .is('consumed_at', null)
     .order('created_at', { ascending: false })
   if (error) throw error
   return (data as WatchlistItem[]) ?? []

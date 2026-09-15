@@ -10,6 +10,7 @@ import {
 } from './icons'
 import {
   formatTimeRange,
+  safeHttpUrl,
   type ActivityAssignment,
   type Attendance,
   type AttendanceStatus,
@@ -218,6 +219,10 @@ function AssignmentSection({
     )
   }
 
+  // href / src に入れる前にスキームを確認する
+  const posterUrl = safeHttpUrl(assignment.movie_poster_url)
+  const watchUrl = safeHttpUrl(assignment.movie_watch_url)
+
   return (
     <div className="space-y-3">
       {assignment.movie_title ? (
@@ -229,9 +234,9 @@ function AssignmentSection({
             </span>
           </div>
           <div className="bg-card border border-line rounded-xl overflow-hidden">
-            {assignment.movie_poster_url && (
+            {posterUrl && (
               <img
-                src={assignment.movie_poster_url}
+                src={posterUrl}
                 alt={`${assignment.movie_title} のポスター`}
                 width={1200}
                 height={675}
@@ -269,9 +274,9 @@ function AssignmentSection({
                     グロ描写あり
                   </span>
                 )}
-                {assignment.movie_watch_url && (
+                {watchUrl && (
                   <a
-                    href={assignment.movie_watch_url}
+                    href={watchUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-0.5 text-accent hover:text-accent-strong"

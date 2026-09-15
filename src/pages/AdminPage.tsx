@@ -184,7 +184,16 @@ export default function AdminPage() {
       })
 
       if (profileError) {
-        setError(`プロフィール作成に失敗しました: ${profileError.message}`)
+        // 認証ユーザーだけが残るとメンバー一覧に出ず、ユーザーIDが二度と使えなくなる。
+        // プロフィールを作れなかったら認証ユーザーごと取り消す。
+        const { error: rollbackError } = await supabase.rpc('admin_delete_member', {
+          p_user_id: data.user.id,
+        })
+        setError(
+          rollbackError
+            ? `プロフィール作成に失敗しました: ${profileError.message}（認証ユーザーの取り消しにも失敗しました: ${rollbackError.message}。同じユーザーIDでの再作成はできません）`
+            : `プロフィール作成に失敗しました: ${profileError.message}（作成途中のアカウントは取り消しました）`
+        )
         setSubmitting(false)
         return
       }

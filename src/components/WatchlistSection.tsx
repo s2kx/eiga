@@ -6,6 +6,7 @@ import {
   updateWatchlistItem,
   deleteWatchlistItem,
 } from '../lib/watchlist'
+import { safeHttpUrl } from '../lib/activity'
 import { AlertIcon, BookmarkIcon, FilmIcon, PlusIcon, TrashIcon } from './icons'
 
 const EMPTY_DRAFT: WatchlistDraft = {
@@ -39,8 +40,20 @@ export default function WatchlistSection({ userId, items, onChange }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  // 視聴URLは申請にそのまま引き継がれ、保存時にサーバ側で検証される。
+  // ここで弾いておかないと、申請画面の自動保存が分かりにくいエラーで失敗する。
+  const invalidUrlMessage = (draft: WatchlistDraft): string | null =>
+    draft.watch_url && !safeHttpUrl(draft.watch_url)
+      ? '視聴URLは http:// または https:// で始めてください'
+      : null
+
   const handleAdd = async (draft: WatchlistDraft) => {
     setError(null)
+    const urlError = invalidUrlMessage(draft)
+    if (urlError) {
+      setError(urlError)
+      return
+    }
     try {
       const created = await addWatchlistItem(userId, draft)
       onChange([created, ...items])
@@ -52,6 +65,11 @@ export default function WatchlistSection({ userId, items, onChange }: Props) {
 
   const handleUpdate = async (id: string, draft: WatchlistDraft) => {
     setError(null)
+    const urlError = invalidUrlMessage(draft)
+    if (urlError) {
+      setError(urlError)
+      return
+    }
     try {
       await updateWatchlistItem(id, draft)
       onChange(items.map((it) => (it.id === id ? { ...it, ...draft } : it)))

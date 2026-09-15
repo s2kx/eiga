@@ -32,6 +32,12 @@ type ManualAssignment = {
   movie_wish_id: string
   user_id: string
 }
+// 公表済み（activity_assignments に反映済み）の日付。
+// 集計後に予約が残っていても、公表されたかどうかはこれで判定する。
+type PublishedAssignment = {
+  date: string
+  movie_wish_id: string | null
+}
 
 type ViewMode = 'date' | 'member'
 
@@ -69,6 +75,7 @@ export default function PreferenceListPanel({
   const [movies, setMovies] = useState<WishWithProfile[]>([])
   const [dates, setDates] = useState<DateRow[]>([])
   const [reservations, setReservations] = useState<ManualAssignment[]>([])
+  const [published, setPublished] = useState<PublishedAssignment[]>([])
   const [view, setView] = useState<ViewMode>('date')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -90,7 +97,7 @@ export default function PreferenceListPanel({
     }
     const periodId = idData as string
 
-    const [periodRes, movieRes, dateRes, assignRes] = await Promise.all([
+    const [periodRes, movieRes, dateRes, assignRes, publishedRes] = await Promise.all([
       supabase.from('activity_periods').select('*').eq('id', periodId).single(),
       supabase
         .from('period_movie_wishes')
@@ -109,17 +116,27 @@ export default function PreferenceListPanel({
         .from('period_manual_assignments')
         .select('period_id, date, movie_date_id, movie_wish_id, user_id')
         .eq('period_id', periodId),
+      supabase
+        .from('activity_assignments')
+        .select('date, movie_wish_id')
+        .eq('period_id', periodId),
     ])
 
-    if (periodRes.error) {
-      setError(`期間の読み込みに失敗しました: ${periodRes.error.message}`)
+    // どれか一つでも失敗したら空表示ではなくエラーを出す。
+    // 特に予約の取得失敗を握りつぶすと、決定済みの日が未決定として描画され、
+    // 候補日の削除ボタンが復活してしまう（削除は予約を cascade で消す）。
+    const failed = [periodRes, movieRes, dateRes, assignRes, publishedRes].find((r) => r.error)
+    if (failed?.error) {
+      setError(`申請一覧の読み込みに失敗しました: ${failed.error.message}`)
       setLoading(false)
       return
     }
+
     setPeriod(periodRes.data as ActivityPeriod)
     setMovies((movieRes.data as unknown as WishWithProfile[]) ?? [])
     setDates((dateRes.data as unknown as DateRow[]) ?? [])
     setReservations((assignRes.data as unknown as ManualAssignment[]) ?? [])
+    setPublished((publishedRes.data as unknown as PublishedAssignment[]) ?? [])
     setLoading(false)
   }, [year, month])
 
@@ -127,12 +144,27 @@ export default function PreferenceListPanel({
     void Promise.resolve().then(fetchData)
   }, [fetchData])
 
+  // 削除すると、その候補を指している手動選択（予約）も FK cascade で消える。
+  // 日付別ビューでは決定済みの候補の削除ボタンを伏せているが、
+  // メンバー別ビューからは削除できるので、ここで気づけるようにする。
+  const reservedDateIds = useMemo(
+    () => new Set(reservations.map((r) => r.movie_date_id)),
+    [reservations]
+  )
+  const reservedWishIds = useMemo(
+    () => new Set(reservations.map((r) => r.movie_wish_id)),
+    [reservations]
+  )
+
   const handleDelete = useCallback(
     async (row: DateRow, movieTitle: string) => {
       const memberLabel = row.profiles?.display_name ?? '(不明)'
+      const warning = reservedDateIds.has(row.id)
+        ? '\n\n※ この候補日はこの日の主催として選択済みです。削除すると選択も取り消されます。'
+        : ''
       if (
         !confirm(
-          `${memberLabel} さんの「${movieTitle}」の候補日 ${formatDateLabel(row.date)} を削除しますか？`
+          `${memberLabel} さんの「${movieTitle}」の候補日 ${formatDateLabel(row.date)} を削除しますか？${warning}`
         )
       ) {
         return
@@ -149,15 +181,18 @@ export default function PreferenceListPanel({
       }
       await fetchData()
     },
-    [fetchData]
+    [fetchData, reservedDateIds]
   )
 
   const handleDeleteMovie = useCallback(
     async (movie: WishWithProfile) => {
       const memberLabel = movie.profiles?.display_name ?? '(不明)'
+      const warning = reservedWishIds.has(movie.id)
+        ? '\n\n※ この映画はある日の主催として選択済みです。削除すると選択も取り消されます。'
+        : ''
       if (
         !confirm(
-          `${memberLabel} さんの映画「${movie.movie_title}」を削除しますか？\nこの映画の候補日もすべて削除されます。`
+          `${memberLabel} さんの映画「${movie.movie_title}」を削除しますか？\nこの映画の候補日もすべて削除されます。${warning}`
         )
       ) {
         return
@@ -174,7 +209,7 @@ export default function PreferenceListPanel({
       }
       await fetchData()
     },
-    [fetchData]
+    [fetchData, reservedWishIds]
   )
 
   const handleAssign = useCallback(
@@ -205,12 +240,15 @@ export default function PreferenceListPanel({
 
   const handleClear = useCallback(
     async (date: string) => {
+      if (!period) return
       if (!confirm(`${formatDateLabel(date)} の手動選択を取り消しますか？`)) {
         return
       }
       setDecidingDate(date)
       setError(null)
+      // 日付だけでは期間をまたいで消えるため period_id で特定する
       const { error: rpcError } = await supabase.rpc('admin_clear_assignment', {
+        p_period_id: period.id,
         p_date: date,
       })
       setDecidingDate(null)
@@ -220,7 +258,7 @@ export default function PreferenceListPanel({
       }
       await fetchData()
     },
-    [fetchData]
+    [fetchData, period]
   )
 
   const periodLocked = !!period?.locked_at
@@ -232,6 +270,14 @@ export default function PreferenceListPanel({
     for (const r of reservations) m.set(r.date, r)
     return m
   }, [reservations])
+
+  // 公表済みの (日付 → 反映された映画) 。集計後も予約は残るので、
+  // 「公表された予約」と「反映されなかった予約」をここで区別する。
+  const publishedWishByDate = useMemo(() => {
+    const m = new Map<string, string | null>()
+    for (const a of published) m.set(a.date, a.movie_wish_id)
+    return m
+  }, [published])
 
   const movieById = useMemo(() => {
     const m = new Map<string, WishWithProfile>()
@@ -353,20 +399,30 @@ export default function PreferenceListPanel({
                 各日の「決定」で主催映画を手動で選べます。選んだ内容は<span className="text-ink">集計（締切）時に自動抽選と同時に公表</span>され、それまでメンバーには表示されません。
               </p>
             )}
-            {byDate.map(([date, rows]) => (
-              <DateGroup
-                key={date}
-                date={date}
-                rows={rows}
-                movieById={movieById}
-                reservation={reservationByDate.get(date) ?? null}
-                onDelete={canEdit ? handleDelete : null}
-                onAssign={canEdit ? handleAssign : null}
-                onClear={canEdit ? handleClear : null}
-                deletingId={deletingId}
-                decidingDate={decidingDate}
-              />
-            ))}
+            {byDate.map(([date, rows]) => {
+              const reservation = reservationByDate.get(date) ?? null
+              // 集計後も予約は残る。公表された予約は解除できないが、
+              // 反映されなかった予約は放置すると再集計で復活するので解除させる。
+              const isPublished =
+                !!reservation && publishedWishByDate.get(date) === reservation.movie_wish_id
+              const canClear = isAdmin && (!periodLocked || !isPublished)
+              return (
+                <DateGroup
+                  key={date}
+                  date={date}
+                  rows={rows}
+                  movieById={movieById}
+                  reservation={reservation}
+                  periodLocked={periodLocked}
+                  isPublished={isPublished}
+                  onDelete={canEdit ? handleDelete : null}
+                  onAssign={canEdit ? handleAssign : null}
+                  onClear={canClear ? handleClear : null}
+                  deletingId={deletingId}
+                  decidingDate={decidingDate}
+                />
+              )
+            })}
           </div>
         ) : (
           <div className="space-y-3">
@@ -422,6 +478,8 @@ function DateGroup({
   rows,
   movieById,
   reservation,
+  periodLocked,
+  isPublished,
   onDelete,
   onAssign,
   onClear,
@@ -432,6 +490,8 @@ function DateGroup({
   rows: DateRow[]
   movieById: Map<string, WishWithProfile>
   reservation: ManualAssignment | null
+  periodLocked: boolean
+  isPublished: boolean
   onDelete: DeleteHandler
   onAssign: AssignHandler
   onClear: ClearHandler
@@ -455,10 +515,29 @@ function DateGroup({
       </div>
 
       {reservation && (
-        <div className="px-3 py-2 bg-accent/10 border-b border-accent/30 flex items-center gap-2">
-          <CheckIcon size={14} className="text-accent shrink-0" />
+        <div
+          className={`px-3 py-2 border-b flex items-center gap-2 ${
+            periodLocked && !isPublished
+              ? 'bg-danger-bg/40 border-danger/30'
+              : 'bg-accent/10 border-accent/30'
+          }`}
+        >
+          <CheckIcon
+            size={14}
+            className={`shrink-0 ${periodLocked && !isPublished ? 'text-danger' : 'text-accent'}`}
+          />
           <div className="flex-1 min-w-0">
-            <p className="text-[11px] text-accent font-semibold">選択済み・公表は集計時</p>
+            <p
+              className={`text-[11px] font-semibold ${
+                periodLocked && !isPublished ? 'text-danger' : 'text-accent'
+              }`}
+            >
+              {!periodLocked
+                ? '選択済み・公表は集計時'
+                : isPublished
+                  ? '公表済み'
+                  : '未反映 — 集計時にこの選択は反映されませんでした'}
+            </p>
             <p className="text-sm text-ink truncate">
               {winnerRow?.profiles?.display_name ?? '(不明)'}
               <span className="text-ink-muted">・{decidedMovie?.movie_title ?? '映画未設定'}</span>
@@ -518,7 +597,9 @@ function DateGroup({
                   決定
                 </button>
               )}
-              {onDelete && !decided && (
+              {/* 選択済みの候補だけ削除を伏せる（削除すると予約も cascade で消えるため）。
+                  同じ日の他の候補は決定後も削除できる。 */}
+              {onDelete && !isWinner && (
                 <button
                   onClick={() => onDelete(row, movie?.movie_title ?? '')}
                   disabled={deletingId === row.id}

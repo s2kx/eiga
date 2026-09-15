@@ -49,11 +49,19 @@ where p.locked_at is null
 on conflict (period_id, date) do nothing;
 
 -- 未ロック期間の手動割当は公開テーブルから取り下げる（公表はロック時に行う）。
+-- 予約へ移せたものだけを取り下げる。対応する候補日が既に消えていて予約化できなかった
+-- 割当を消すと、その決定はどこにも残らず失われるため、公開テーブルに残して気づけるようにする。
 delete from public.activity_assignments a
 using public.activity_periods p
 where p.id = a.period_id
   and p.locked_at is null
-  and a.movie_wish_id is not null;
+  and a.movie_wish_id is not null
+  and exists (
+    select 1 from public.period_manual_assignments pma
+    where pma.period_id = a.period_id
+      and pma.date = a.date
+      and pma.movie_wish_id = a.movie_wish_id
+  );
 
 -- (3a) 候補日1件を「選択」する（予約）。締切前でも可、ロック後は不可。
 create or replace function public.admin_assign_movie_date(p_movie_date_id uuid)
