@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useId, type FormEvent, type ComponentType } from 'react'
-import { supabase, supabaseAdmin } from '../lib/supabase'
+import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import {
   getStoredViewMonth,
@@ -161,42 +161,20 @@ export default function AdminPage() {
     setSuccess('')
     setSubmitting(true)
 
-    const email = `${username.trim()}@circle.local`
-
-    const { data, error: signUpError } = await supabaseAdmin.auth.signUp({
-      email,
-      password,
+    // サインアップは Supabase 側で無効化しているため、管理者専用の RPC で
+    // auth ユーザーとプロフィールを一括作成する（migration 036）。
+    const { error: createError } = await supabase.rpc('admin_create_member', {
+      p_username: username.trim(),
+      p_display_name: displayName.trim(),
+      p_password: password,
+      p_is_admin: isAdmin,
+      p_is_viewer: isViewer,
     })
 
-    if (signUpError) {
-      setError(`アカウント作成に失敗しました: ${signUpError.message}`)
+    if (createError) {
+      setError(`アカウント作成に失敗しました: ${createError.message}`)
       setSubmitting(false)
       return
-    }
-
-    if (data.user) {
-      const { error: profileError } = await supabase.from('profiles').insert({
-        id: data.user.id,
-        username: username.trim(),
-        display_name: displayName.trim(),
-        is_admin: isAdmin,
-        is_viewer: isViewer,
-      })
-
-      if (profileError) {
-        // 認証ユーザーだけが残るとメンバー一覧に出ず、ユーザーIDが二度と使えなくなる。
-        // プロフィールを作れなかったら認証ユーザーごと取り消す。
-        const { error: rollbackError } = await supabase.rpc('admin_delete_member', {
-          p_user_id: data.user.id,
-        })
-        setError(
-          rollbackError
-            ? `プロフィール作成に失敗しました: ${profileError.message}（認証ユーザーの取り消しにも失敗しました: ${rollbackError.message}。同じユーザーIDでの再作成はできません）`
-            : `プロフィール作成に失敗しました: ${profileError.message}（作成途中のアカウントは取り消しました）`
-        )
-        setSubmitting(false)
-        return
-      }
     }
 
     setSuccess(`「${displayName.trim()}」のアカウントを作成しました`)
